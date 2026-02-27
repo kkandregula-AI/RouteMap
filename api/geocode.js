@@ -1,3 +1,28 @@
+// Vercel Serverless Function
+// URL: https://route-map-two.vercel.app/api/geocode?q=hyderabad
+
+// Simple in-memory rate limiter (per deployment instance)
+const rateLimit = new Map();
+
+function checkLimit(ip) {
+  const now = Date.now();
+  const windowMs = 60 * 1000; // 1 minute window
+  const maxRequests = 60; // 60 requests per minute
+
+  const record = rateLimit.get(ip) || { count: 0, start: now };
+
+  if (now - record.start > windowMs) {
+    rateLimit.set(ip, { count: 1, start: now });
+    return true;
+  }
+
+  if (record.count >= maxRequests) return false;
+
+  record.count++;
+  rateLimit.set(ip, record);
+  return true;
+}
+
 export default async function handler(req, res) {
   try {
     if (req.method !== "GET") {
@@ -9,7 +34,12 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Query too short (min 3 chars)" });
     }
 
-    // ✅ Put your real email here
+    const ip = req.headers["x-forwarded-for"] || "unknown";
+    if (!checkLimit(ip)) {
+      return res.status(429).json({ error: "Too many requests" });
+    }
+
+    // 🔐 IMPORTANT: Put your real email here
     const CONTACT_EMAIL = "kkandregula@gmail.com";
     const APP_ID = "route-map-two/1.0";
     const REFERER = "https://route-map-two.vercel.app/";
@@ -17,8 +47,8 @@ export default async function handler(req, res) {
     // If you want India-only results, uncomment countrycodes=in
     const nominatimUrl =
       "https://nominatim.openstreetmap.org/search" +
-      `?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`
-       + `&countrycodes=in`;
+      `?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`;
+      // + `&countrycodes=in`;
 
     const headers = {
       "User-Agent": `${APP_ID} (contact: ${CONTACT_EMAIL})`,
@@ -27,53 +57,58 @@ export default async function handler(req, res) {
       "Accept": "application/json",
     };
 
-    const r = await fetch(nominatimUrl, { headers });
+    // ----------------------------
+    // 1️⃣ Try Nominatim
+    // ----------------------------
+    try {
+      const r = await fetch(nominatimUrl, { headers });
+      const text = await r.text();
 
-    // Read body safely (helps debugging when Nominatim returns HTML)
-    const contentType = r.headers.get("content-type") || "";
-    const text = await r.text();
+      if (r.ok) {
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          return res.status(502).json({ error: "Invalid JSON from Nominatim" });
+        }
 
-    if (r.ok) {
-      // Parse JSON only if it looks like JSON
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        console.error("Nominatim OK but non-JSON:", text.slice(0, 300));
-        return res.status(502).json({ error: "Nominatim returned non-JSON response" });
+        const arr = Array.isArray(data) ? data : [];
+
+        // Optional: Prefer India first
+        arr.sort((a, b) => {
+          const aIndia = String(a?.display_name || "").toLowerCase().includes("india");
+          const bIndia = String(b?.display_name || "").toLowerCase().includes("india");
+          return Number(bIndia) - Number(aIndia);
+        });
+
+        res.setHeader("Cache-Control", "s-maxage=600, stale-while-revalidate=1200");
+        return res.status(200).json(arr);
       }
-
-      // ✅ Guard: ensure array before sorting
-      const arr = Array.isArray(data) ? data : [];
-
-      // ✅ Prefer India first (global search, India priority)
-      const sorted = arr.sort((a, b) => {
-        const aIndia = String(a?.display_name || "").toLowerCase().includes("india");
-        const bIndia = String(b?.display_name || "").toLowerCase().includes("india");
-        return Number(bIndia) - Number(aIndia);
-      });
-
-      res.setHeader("Cache-Control", "s-maxage=120, stale-while-revalidate=600");
-      return res.status(200).json(sorted);
+    } catch (err) {
+      // Ignore and fallback
     }
 
-    // If Nominatim blocks/ratelimits, fall back to Photon
-    if (r.status === 403 || r.status === 429) {
-      const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6`;
-      const pr = await fetch(photonUrl, { headers: { Accept: "application/json" } });
+    // ----------------------------
+    // 2️⃣ Fallback: Photon (OSM-based)
+    // ----------------------------
+    try {
+      const photonUrl =
+        `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6`;
 
-      const pText = await pr.text();
+      const pr = await fetch(photonUrl, {
+        headers: { Accept: "application/json" },
+      });
+
+      const text = await pr.text();
       if (!pr.ok) {
-        console.error("Photon error:", pr.status, pText.slice(0, 300));
-        return res.status(pr.status).send(pText);
+        return res.status(pr.status).send(text);
       }
 
       let pdata;
       try {
-        pdata = JSON.parse(pText);
+        pdata = JSON.parse(text);
       } catch {
-        console.error("Photon non-JSON:", pText.slice(0, 300));
-        return res.status(502).json({ error: "Photon returned non-JSON response" });
+        return res.status(502).json({ error: "Invalid JSON from Photon" });
       }
 
       const converted = (pdata?.features || []).map((f) => ({
@@ -86,15 +121,13 @@ export default async function handler(req, res) {
         lon: String(f?.geometry?.coordinates?.[0] ?? ""),
       }));
 
-      res.setHeader("Cache-Control", "s-maxage=120, stale-while-revalidate=600");
+      res.setHeader("Cache-Control", "s-maxage=600, stale-while-revalidate=1200");
       return res.status(200).json(converted);
+    } catch (err) {
+      return res.status(500).json({ error: "Photon fallback failed" });
     }
-
-    // Forward other errors (show short text for debugging)
-    console.error("Nominatim error:", r.status, contentType, text.slice(0, 300));
-    return res.status(r.status).send(text);
-  } catch (e) {
-    console.error("Function crash:", e);
-    return res.status(500).json({ error: String(e?.message || e) });
+  } catch (err) {
+    console.error("Function crash:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 }

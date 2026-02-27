@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+ import React, { useMemo, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
   Linking,
+  ActivityIndicator,
 } from "react-native";
 import MapView, { Marker, Polyline, UrlTile } from "react-native-maps";
 import * as Location from "expo-location";
@@ -17,7 +18,7 @@ import polyline from "@mapbox/polyline";
 import debounce from "lodash.debounce";
 
 const OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving";
-const VERCEL_BASE_URL = "https://route-map-two.vercel.app"; // <-- your proxy
+const VERCEL_BASE_URL = "https://route-map-two.vercel.app"; // your proxy
 
 type LatLng = { latitude: number; longitude: number };
 type NominatimResult = {
@@ -25,6 +26,12 @@ type NominatimResult = {
   display_name: string;
   lat: string;
   lon: string;
+};
+
+type DirectionStep = {
+  instruction: string;
+  distance: number; // meters
+  duration: number; // seconds
 };
 
 export default function HomeScreen() {
@@ -35,6 +42,9 @@ export default function HomeScreen() {
   const [destLabel, setDestLabel] = useState<string>("");
 
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+  const [directions, setDirections] = useState<DirectionStep[]>([]);
+  const [routeMeta, setRouteMeta] = useState<{ distanceM: number; durationS: number } | null>(null);
+
   const [loading, setLoading] = useState(false);
 
   const [query, setQuery] = useState("");
@@ -51,10 +61,15 @@ export default function HomeScreen() {
     []
   );
 
+  const formatKm = (m: number) => `${(m / 1000).toFixed(1)} km`;
+  const formatMin = (s: number) => `${Math.max(1, Math.round(s / 60))} min`;
+
   const clearAll = () => {
     setDest(null);
     setDestLabel("");
     setRouteCoords([]);
+    setDirections([]);
+    setRouteMeta(null);
     setResults([]);
     setQuery("");
   };
@@ -86,7 +101,7 @@ export default function HomeScreen() {
   const fetchRoute = async (start: LatLng, end: LatLng) => {
     setLoading(true);
     try {
-      // OSRM expects lon,lat;lon,lat
+      // OSRM expects: lon,lat;lon,lat
       const coords = `${start.longitude},${start.latitude};${end.longitude},${end.latitude}`;
       const url = `${OSRM_ROUTE_URL}/${coords}?overview=full&geometries=polyline&steps=true`;
 
@@ -96,18 +111,37 @@ export default function HomeScreen() {
       const data = await res.json();
       if (!data?.routes?.length) throw new Error("No route returned");
 
-      const geometry = data.routes[0].geometry;
-      const decoded = polyline.decode(geometry, 5).map(([lat, lon]) => ({
+      const route = data.routes[0];
+
+      // Route line
+      const geometry = route.geometry;
+      const decoded: LatLng[] = polyline.decode(geometry, 5).map(([lat, lon]) => ({
         latitude: lat,
         longitude: lon,
       }));
-
       setRouteCoords(decoded);
+
+      // Meta
+      setRouteMeta({
+        distanceM: Number(route.distance || 0),
+        durationS: Number(route.duration || 0),
+      });
+
+      // Steps
+      const steps: DirectionStep[] =
+        route.legs?.flatMap((leg: any) =>
+          (leg.steps || []).map((s: any) => ({
+            instruction: s?.maneuver?.instruction || "Continue",
+            distance: Number(s?.distance || 0),
+            duration: Number(s?.duration || 0),
+          }))
+        ) || [];
+      setDirections(steps);
 
       // Fit map to route
       setTimeout(() => {
         mapRef.current?.fitToCoordinates(decoded, {
-          edgePadding: { top: 80, right: 40, bottom: 240, left: 40 },
+          edgePadding: { top: 80, right: 40, bottom: 320, left: 40 },
           animated: true,
         });
       }, 50);
@@ -133,6 +167,8 @@ export default function HomeScreen() {
     setDest({ latitude, longitude });
     setDestLabel("Dropped pin");
     setRouteCoords([]);
+    setDirections([]);
+    setRouteMeta(null);
     setResults([]);
     setQuery("");
   };
@@ -149,10 +185,9 @@ export default function HomeScreen() {
     setSearching(true);
     try {
       const url = `${VERCEL_BASE_URL}/api/geocode?q=${encodeURIComponent(q)}`;
-      console.log("GEOCODE URL =>", url);
+      // console.log("GEOCODE URL =>", url);
 
       const res = await fetch(url);
-
       if (!res.ok) {
         const t = await res.text();
         throw new Error(`HTTP ${res.status}: ${t}`);
@@ -168,7 +203,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Debounce to reduce requests
   const debouncedSearch = useMemo(() => debounce(doSearch, 800), []);
   const onChangeQuery = (text: string) => {
     setQuery(text);
@@ -188,9 +222,10 @@ export default function HomeScreen() {
     setDest({ latitude, longitude });
     setDestLabel(label);
     setRouteCoords([]);
+    setDirections([]);
+    setRouteMeta(null);
     setResults([]);
 
-    // Move map to destination
     mapRef.current?.animateToRegion(
       { latitude, longitude, latitudeDelta: 0.04, longitudeDelta: 0.04 },
       400
@@ -235,7 +270,7 @@ export default function HomeScreen() {
     }
   };
 
-  // Avoid react-native-maps crash on Expo Web (optional)
+  // Optional: avoid react-native-maps crash on Expo Web
   if (Platform.OS === "web") {
     return (
       <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -250,19 +285,24 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <Text style={styles.title}>OSM Route + Navigation</Text>
+        <Text style={styles.title}>OSM Route + Directions</Text>
 
-        <View style={styles.searchBox}>
-          <TextInput
-            value={query}
-            onChangeText={onChangeQuery}
-            placeholder="Type destination address (min 3 chars)…"
-            placeholderTextColor="#777"
-            style={styles.input}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <Text style={styles.searchHint}>{searching ? "Searching…" : " "}</Text>
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <TextInput
+              value={query}
+              onChangeText={onChangeQuery}
+              placeholder="Type destination (min 3 chars)…"
+              placeholderTextColor="#777"
+              style={styles.input}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={styles.searchHintRow}>
+              {searching ? <ActivityIndicator /> : <View style={{ width: 20, height: 20 }} />}
+              <Text style={styles.searchHint}>{searching ? "Searching…" : " "}</Text>
+            </View>
+          </View>
         </View>
 
         {results.length > 0 && (
@@ -298,7 +338,47 @@ export default function HomeScreen() {
 
           {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={5} />}
         </MapView>
+
+        {/* Floating: center to my location */}
+        <Pressable
+          style={[styles.fab, loading && styles.btnDisabled]}
+          disabled={loading}
+          onPress={async () => {
+            const loc = myLoc || (await getMyLocation());
+            if (!loc) return;
+            mapRef.current?.animateToRegion(
+              { ...loc, latitudeDelta: 0.02, longitudeDelta: 0.02 },
+              350
+            );
+          }}
+        >
+          <Text style={styles.fabText}>📍</Text>
+        </Pressable>
       </View>
+
+      {/* Directions panel (under map, above buttons) */}
+      {directions.length > 0 && (
+        <View style={styles.directionsWrap}>
+          <View style={styles.directionsHeader}>
+            <Text style={styles.directionsTitle}>Directions</Text>
+            {routeMeta && (
+              <Text style={styles.directionsMeta}>
+                {formatKm(routeMeta.distanceM)} • {formatMin(routeMeta.durationS)}
+              </Text>
+            )}
+          </View>
+
+          <FlatList
+            data={directions}
+            keyExtractor={(_, i) => String(i)}
+            renderItem={({ item, index }) => (
+              <Text style={styles.directionItem}>
+                {index + 1}. {item.instruction} • {formatKm(item.distance)}
+              </Text>
+            )}
+          />
+        </View>
+      )}
 
       <View style={styles.controls}>
         <Pressable
@@ -327,9 +407,11 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
+
   header: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6 },
   title: { fontSize: 18, fontWeight: "800", marginBottom: 8 },
 
+  searchRow: { gap: 8 },
   searchBox: {
     backgroundColor: "#f2f2f2",
     borderRadius: 14,
@@ -337,7 +419,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   input: { fontSize: 14, color: "#111" },
-  searchHint: { fontSize: 11, opacity: 0.6, marginTop: 4 },
+  searchHintRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
+  searchHint: { fontSize: 11, opacity: 0.6 },
 
   results: {
     marginTop: 8,
@@ -358,6 +441,34 @@ const styles = StyleSheet.create({
   attribution: { fontSize: 11, opacity: 0.6, padding: 8 },
 
   mapWrap: { flex: 1, marginHorizontal: 12, borderRadius: 16, overflow: "hidden" },
+
+  fab: {
+    position: "absolute",
+    right: 14,
+    bottom: 14,
+    backgroundColor: "#111",
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fabText: { color: "#fff", fontSize: 18 },
+
+  directionsWrap: {
+    marginHorizontal: 12,
+    marginTop: 10,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#eee",
+    padding: 12,
+    maxHeight: 220,
+  },
+  directionsHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
+  directionsTitle: { fontSize: 14, fontWeight: "800", marginBottom: 8 },
+  directionsMeta: { fontSize: 12, opacity: 0.7 },
+  directionItem: { fontSize: 13, marginBottom: 6, color: "#111" },
 
   controls: { flexDirection: "row", gap: 8, padding: 12, flexWrap: "wrap" },
   btn: {
