@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     // ---------- Primary: Nominatim ----------
     const nominatimUrl =
       "https://nominatim.openstreetmap.org/search" +
-      `?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`;
+      `?format=jsonv2&addressdetails=1&limit=6&countrycodes=in&q=${encodeURIComponent(q)}`;
 
     const commonHeaders = {
       // Nominatim usage policy: identify your application (not generic UA)
@@ -43,7 +43,8 @@ if (r.ok) {
   return res.status(200).json(sorted);
 }
 
-    // If Nominatim blocks (403/429), fall back to Photon (OSM-backed)
+    // If Nominatim blocks (403/429), fall back to Photon (OSM-ba
+cked)
     if (r.status === 403 || r.status === 429) {
       const photonUrl =
         "https://photon.komoot.io/api/" +
