@@ -1,11 +1,32 @@
- import React, { useEffect, useRef } from "react";
-import MapView, { Marker, Polyline, UrlTile } from "react-native-maps";
-import { StyleSheet, View } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Platform, StyleSheet, Text, View } from "react-native";
 
-export default function MapViewContainer({ start, dest, routeCoords }) {
-  const mapRef = useRef<MapView | null>(null);
+let MapView: any, Marker: any, Polyline: any, UrlTile: any;
+
+// ✅ Only require react-native-maps on native (iOS/Android)
+if (Platform.OS !== "web") {
+  const maps = require("react-native-maps");
+  MapView = maps.default;
+  Marker = maps.Marker;
+  Polyline = maps.Polyline;
+  UrlTile = maps.UrlTile;
+}
+
+type LatLng = { latitude: number; longitude: number };
+
+export default function MapViewContainer({
+  start,
+  dest,
+  routeCoords,
+}: {
+  start: LatLng | null;
+  dest: LatLng | null;
+  routeCoords: LatLng[];
+}) {
+  const mapRef = useRef<any>(null);
 
   useEffect(() => {
+    if (Platform.OS === "web") return;
     if (routeCoords?.length > 0) {
       mapRef.current?.fitToCoordinates(routeCoords, {
         edgePadding: { top: 80, right: 40, bottom: 200, left: 40 },
@@ -14,10 +35,20 @@ export default function MapViewContainer({ start, dest, routeCoords }) {
     }
   }, [routeCoords]);
 
+  // ✅ Web fallback (prevents crash / blank)
+  if (Platform.OS === "web") {
+    return (
+      <View style={styles.webFallback}>
+        <Text style={styles.webTitle}>Map is mobile-only</Text>
+        <Text style={styles.webText}>Open this app in Expo Go on iOS/Android.</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1 }}>
       <MapView
-        ref={(r) => (mapRef.current = r)}
+        ref={(r: any) => (mapRef.current = r)}
         style={StyleSheet.absoluteFill}
         initialRegion={{
           latitude: 19.076,
@@ -36,3 +67,9 @@ export default function MapViewContainer({ start, dest, routeCoords }) {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  webFallback: { flex: 1, alignItems: "center", justifyContent: "center", padding: 16 },
+  webTitle: { fontSize: 18, fontWeight: "900" },
+  webText: { marginTop: 8, opacity: 0.7, textAlign: "center" },
+});
