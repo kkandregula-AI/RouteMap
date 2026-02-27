@@ -17,8 +17,7 @@ import polyline from "@mapbox/polyline";
 import debounce from "lodash.debounce";
 
 const OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving";
-const NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
-const VERCEL_BASE_URL = "https://route-map-two.vercel.app";
+const VERCEL_BASE_URL = "https://route-map-two.vercel.app"; // <-- your proxy
 
 type LatLng = { latitude: number; longitude: number };
 type NominatimResult = {
@@ -87,11 +86,12 @@ export default function HomeScreen() {
   const fetchRoute = async (start: LatLng, end: LatLng) => {
     setLoading(true);
     try {
+      // OSRM expects lon,lat;lon,lat
       const coords = `${start.longitude},${start.latitude};${end.longitude},${end.latitude}`;
       const url = `${OSRM_ROUTE_URL}/${coords}?overview=full&geometries=polyline&steps=true`;
 
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`Route HTTP ${res.status}`);
 
       const data = await res.json();
       if (!data?.routes?.length) throw new Error("No route returned");
@@ -137,10 +137,10 @@ export default function HomeScreen() {
     setQuery("");
   };
 
-  // Nominatim search (debounced)
+  // ✅ Geocode search via Vercel proxy (debounced)
   const doSearch = async (text: string) => {
-    console.log("GEOCODE URL =>", url);
     const q = text.trim();
+
     if (q.length < 3) {
       setResults([]);
       return;
@@ -148,23 +148,18 @@ export default function HomeScreen() {
 
     setSearching(true);
     try {
-      // IMPORTANT: Nominatim public usage policy requires identifying User-Agent/Referer
-      // In mobile, Referer isn't practical; we set a descriptive User-Agent header.
-      const url =
-        `${NOMINATIM_SEARCH_URL}?format=json&addressdetails=1&limit=6` +
-        `&q=${encodeURIComponent(q)}`;
+      const url = `${VERCEL_BASE_URL}/api/geocode?q=${encodeURIComponent(q)}`;
+      console.log("GEOCODE URL =>", url);
 
-      const res = await fetch(url, {
-        headers: {
-          // Customize this to your app name + contact
-          "User-Agent": "OSMRouteApp/1.0 (contact: you@example.com)",
-        },
-      });
+      const res = await fetch(url);
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`HTTP ${res.status}: ${t}`);
+      }
 
-      const data: NominatimResult[] = await res.json();
-      setResults(data || []);
+      const data = await res.json();
+      setResults(Array.isArray(data) ? data : []);
     } catch (err: any) {
       setResults([]);
       Alert.alert("Search error", String(err?.message || err));
@@ -173,7 +168,8 @@ export default function HomeScreen() {
     }
   };
 
-  const debouncedSearch = useMemo(() => debounce(doSearch, 600), []);
+  // Debounce to reduce requests
+  const debouncedSearch = useMemo(() => debounce(doSearch, 800), []);
   const onChangeQuery = (text: string) => {
     setQuery(text);
     debouncedSearch(text);
@@ -207,47 +203,49 @@ export default function HomeScreen() {
       return;
     }
 
-    // Ensure we have a start point (current location)
     const start = myLoc || (await getMyLocation());
     if (!start) return;
 
     const origin = `${start.latitude},${start.longitude}`;
     const destination = `${dest.latitude},${dest.longitude}`;
 
-    // Prefer Google Maps universal directions URL, then Apple Maps.
-    // Google Maps URL format: api=1, origin, destination, travelmode. :contentReference[oaicite:0]{index=0}
     const googleUrl =
       `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}` +
       `&destination=${encodeURIComponent(destination)}&travelmode=driving`;
 
-    // Apple Maps URL scheme (maps.apple.com) supports directions. :contentReference[oaicite:1]{index=1}
     const appleUrl =
       `http://maps.apple.com/?saddr=${encodeURIComponent(origin)}` +
       `&daddr=${encodeURIComponent(destination)}&dirflg=d`;
 
     try {
-      // On iOS, Apple Maps is always available; on Android, Google Maps is typical.
       const primary = Platform.OS === "ios" ? appleUrl : googleUrl;
       const fallback = Platform.OS === "ios" ? googleUrl : appleUrl;
 
-      const canOpenPrimary = await Linking.canOpenURL(primary);
-      if (canOpenPrimary) {
+      if (await Linking.canOpenURL(primary)) {
         await Linking.openURL(primary);
         return;
       }
-
-      const canOpenFallback = await Linking.canOpenURL(fallback);
-      if (canOpenFallback) {
+      if (await Linking.canOpenURL(fallback)) {
         await Linking.openURL(fallback);
         return;
       }
-
-      // Last resort
       await Linking.openURL(googleUrl);
     } catch (err: any) {
       Alert.alert("Navigation error", String(err?.message || err));
     }
   };
+
+  // Avoid react-native-maps crash on Expo Web (optional)
+  if (Platform.OS === "web") {
+    return (
+      <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <Text style={{ fontSize: 16, fontWeight: "700" }}>Mobile only</Text>
+        <Text style={{ marginTop: 8, opacity: 0.7, textAlign: "center" }}>
+          This screen uses react-native-maps and runs on Android/iOS via Expo Go / builds.
+        </Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -312,14 +310,14 @@ export default function HomeScreen() {
         </Pressable>
 
         <Pressable
-          style={[styles.btn, styles.btnNav, loading && styles.btnDisabled]}
+          style={[styles.btn, styles.btnSecondary, loading && styles.btnDisabled]}
           onPress={startNavigation}
           disabled={loading}
         >
           <Text style={styles.btnText}>Start Navigation</Text>
         </Pressable>
 
-        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={clearAll} disabled={loading}>
+        <Pressable style={[styles.btn, styles.btnTertiary]} onPress={clearAll} disabled={loading}>
           <Text style={styles.btnText}>Clear</Text>
         </Pressable>
       </View>
@@ -350,7 +348,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     maxHeight: 220,
   },
-  resultItem: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#f2f2f2" },
+  resultItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f2f2f2",
+  },
   resultText: { fontSize: 13, color: "#111" },
   attribution: { fontSize: 11, opacity: 0.6, padding: 8 },
 
@@ -367,8 +370,8 @@ const styles = StyleSheet.create({
     minWidth: 110,
     flexGrow: 1,
   },
-  btnNav: { backgroundColor: "#0f4" as any }, // RN will ignore invalid on some; you can set any color you want
-  btnSecondary: { backgroundColor: "#444" },
+  btnSecondary: { backgroundColor: "#333" },
+  btnTertiary: { backgroundColor: "#555" },
   btnDisabled: { opacity: 0.6 },
   btnText: { color: "#fff", fontWeight: "800" },
 });
