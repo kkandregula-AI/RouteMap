@@ -29,11 +29,19 @@ export default async function handler(req, res) {
 
     const r = await fetch(nominatimUrl, { headers: commonHeaders });
 
-    if (r.ok) {
-      const data = await r.json();
-      res.setHeader("Cache-Control", "s-maxage=120, stale-while-revalidate=600");
-      return res.status(200).json(data);
-    }
+if (r.ok) {
+  const data = await r.json();
+
+  // ✅ Sort results to prefer India first
+  const sorted = [...data].sort((a, b) => {
+    const aIndia = (a.display_name || "").toLowerCase().includes("india");
+    const bIndia = (b.display_name || "").toLowerCase().includes("india");
+    return Number(bIndia) - Number(aIndia);
+  });
+
+  res.setHeader("Cache-Control", "s-maxage=120, stale-while-revalidate=600");
+  return res.status(200).json(sorted);
+}
 
     // If Nominatim blocks (403/429), fall back to Photon (OSM-backed)
     if (r.status === 403 || r.status === 429) {
