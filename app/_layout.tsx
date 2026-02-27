@@ -1,9 +1,11 @@
+import React from "react";
+import { Stack } from "expo-router";
 import { RouteProvider } from "../context/RouteContext";
 
 export default function RootLayout() {
   return (
     <RouteProvider>
-      {/* your existing layout code */}
+      <Stack screenOptions={{ headerShown: false }} />
     </RouteProvider>
   );
 }
