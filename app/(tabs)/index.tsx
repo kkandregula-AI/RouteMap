@@ -18,6 +18,7 @@ import debounce from "lodash.debounce";
 
 const OSRM_ROUTE_URL = "https://router.project-osrm.org/route/v1/driving";
 const NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
+const VERCEL_BASE_URL = "https://route-map-two.vercel.app";
 
 type LatLng = { latitude: number; longitude: number };
 type NominatimResult = {
@@ -138,6 +139,7 @@ export default function HomeScreen() {
 
   // Nominatim search (debounced)
   const doSearch = async (text: string) => {
+    console.log("GEOCODE URL =>", url);
     const q = text.trim();
     if (q.length < 3) {
       setResults([]);

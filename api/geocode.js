@@ -17,8 +17,8 @@ export default async function handler(req, res) {
     // If you want India-only results, uncomment countrycodes=in
     const nominatimUrl =
       "https://nominatim.openstreetmap.org/search" +
-      `?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`;
-      // + `&countrycodes=in`;
+      `?format=jsonv2&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`
+       + `&countrycodes=in`;
 
     const headers = {
       "User-Agent": `${APP_ID} (contact: ${CONTACT_EMAIL})`,
