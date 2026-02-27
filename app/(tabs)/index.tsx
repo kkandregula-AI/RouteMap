@@ -2,7 +2,6 @@
 import React, { useMemo, useState } from "react";
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
 import debounce from "lodash.debounce";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import MapViewContainer from "../../components/MapViewContainer";
 import SearchBox from "../../components/SearchBox";
@@ -12,6 +11,9 @@ import ControlButtons from "../../components/ControlButtons";
 import { useRoute } from "../../hooks/useRoute";
 import { useLiveLocation } from "../../hooks/useLiveLocation";
 import { geocodeSearch } from "../../hooks/useGeocode";
+
+// ✅ Global shared route state (Explore reads this instantly)
+import { useRouteContext } from "../../context/RouteContext";
 
 type LatLng = { latitude: number; longitude: number };
 
@@ -25,6 +27,7 @@ function toLatLng(r: any): LatLng | null {
 export default function HomeScreen() {
   const { country, getNow } = useLiveLocation();
   const { coords, directions, meta, fetchRoute, clearRoute } = useRoute();
+  const { setRoute } = useRouteContext();
 
   const [start, setStart] = useState<LatLng | null>(null);
   const [dest, setDest] = useState<LatLng | null>(null);
@@ -122,13 +125,21 @@ export default function HomeScreen() {
     }
     const oldStart = start;
     const oldDest = dest;
+
     setStart(oldDest);
     setDest(oldStart);
-    setStartQuery(destQuery || "Start");
-    setDestQuery(startQuery || "Destination");
+
+    const oldStartQ = startQuery;
+    const oldDestQ = destQuery;
+
+    setStartQuery(oldDestQ || "Start");
+    setDestQuery(oldStartQ || "Destination");
+
     setStartResults([]);
     setDestResults([]);
-    setStops([]); // keep it simple for MVP
+
+    // Keep it simple: clear stops on swap
+    setStops([]);
     clearRoute();
   };
 
@@ -145,22 +156,20 @@ export default function HomeScreen() {
     try {
       await fetchRoute([start, ...stops, dest]);
 
-      // ✅ Save last route so Explore can use it
-      await AsyncStorage.setItem(
-        "lastRoute",
-        JSON.stringify({
-          start,
-          dest,
-          stops,
-          savedAt: Date.now(),
-        })
-      );
+      // ✅ Instantly sync to Explore (no refresh needed)
+      setRoute({
+        start,
+        dest,
+        stops,
+        startLabel: startQuery,
+        destLabel: destQuery,
+      });
     } catch (e: any) {
       Alert.alert("Route error", String(e?.message || e));
     }
   };
 
-  const onClear = async () => {
+  const onClear = () => {
     setStart(null);
     setDest(null);
     setStops([]);
@@ -170,8 +179,8 @@ export default function HomeScreen() {
     setDestResults([]);
     clearRoute();
 
-    // optional: clear last route
-    // await AsyncStorage.removeItem("lastRoute");
+    // Also clear shared route for Explore
+    setRoute({ start: null, dest: null, stops: [], startLabel: "", destLabel: "" });
   };
 
   return (
