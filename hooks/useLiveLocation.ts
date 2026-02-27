@@ -2,36 +2,34 @@ import { useEffect, useState } from "react";
 import * as Location from "expo-location";
 
 export function useLiveLocation() {
-  const [location, setLocation] = useState<any>(null);
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [country, setCountry] = useState<string | null>(null);
 
+  const getNow = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") return null;
+
+    const loc = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+    });
+
+    const c = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+    setCoords(c);
+
+    try {
+      const rev = await Location.reverseGeocodeAsync(c);
+      const code = rev?.[0]?.isoCountryCode?.toLowerCase() || null;
+      setCountry(code);
+    } catch {}
+
+    return c;
+  };
+
   useEffect(() => {
-    let sub: any;
-
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-
-      const loc = await Location.getCurrentPositionAsync({});
-      setLocation(loc.coords);
-
-      const rev = await Location.reverseGeocodeAsync({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      });
-
-      setCountry(rev?.[0]?.isoCountryCode?.toLowerCase() || null);
-
-      sub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, distanceInterval: 10 },
-        (update) => {
-          setLocation(update.coords);
-        }
-      );
-    })();
-
-    return () => sub?.remove();
+    // Get once on load (best-effort)
+    getNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { location, country };
+  return { coords, country, getNow };
 }
