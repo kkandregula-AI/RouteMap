@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from "react";
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
 import debounce from "lodash.debounce";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import MapViewContainer from "../../components/MapViewContainer";
 import SearchBox from "../../components/SearchBox";
@@ -43,7 +44,7 @@ export default function HomeScreen() {
         try {
           const r = await geocodeSearch(q, country || undefined);
           setStartResults(r);
-        } catch (e) {
+        } catch {
           setStartResults([]);
         }
       }, 700),
@@ -58,7 +59,7 @@ export default function HomeScreen() {
         try {
           const r = await geocodeSearch(q, country || undefined);
           setDestResults(r);
-        } catch (e) {
+        } catch {
           setDestResults([]);
         }
       }, 700),
@@ -84,12 +85,16 @@ export default function HomeScreen() {
   };
 
   const useCurrentAsStart = async () => {
-    const c = await getNow();
-    if (!c) return Alert.alert("Location", "Location permission not granted.");
-    setStart(c);
-    setStartQuery("Current location");
-    setStartResults([]);
-    clearRoute();
+    try {
+      const c = await getNow();
+      if (!c) return Alert.alert("Location", "Location permission not granted.");
+      setStart(c);
+      setStartQuery("Current location");
+      setStartResults([]);
+      clearRoute();
+    } catch (e: any) {
+      Alert.alert("Location error", String(e?.message || e));
+    }
   };
 
   const addStopFromDest = () => {
@@ -110,6 +115,23 @@ export default function HomeScreen() {
     clearRoute();
   };
 
+  const swapStartDest = () => {
+    if (!start || !dest) {
+      Alert.alert("Swap", "Please select both Start and Destination first.");
+      return;
+    }
+    const oldStart = start;
+    const oldDest = dest;
+    setStart(oldDest);
+    setDest(oldStart);
+    setStartQuery(destQuery || "Start");
+    setDestQuery(startQuery || "Destination");
+    setStartResults([]);
+    setDestResults([]);
+    setStops([]); // keep it simple for MVP
+    clearRoute();
+  };
+
   const onRoute = async () => {
     if (!start) {
       Alert.alert("Missing", "Please choose Start (or use Current Location).");
@@ -122,12 +144,23 @@ export default function HomeScreen() {
 
     try {
       await fetchRoute([start, ...stops, dest]);
+
+      // ✅ Save last route so Explore can use it
+      await AsyncStorage.setItem(
+        "lastRoute",
+        JSON.stringify({
+          start,
+          dest,
+          stops,
+          savedAt: Date.now(),
+        })
+      );
     } catch (e: any) {
       Alert.alert("Route error", String(e?.message || e));
     }
   };
 
-  const onClear = () => {
+  const onClear = async () => {
     setStart(null);
     setDest(null);
     setStops([]);
@@ -136,6 +169,9 @@ export default function HomeScreen() {
     setStartResults([]);
     setDestResults([]);
     clearRoute();
+
+    // optional: clear last route
+    // await AsyncStorage.removeItem("lastRoute");
   };
 
   return (
@@ -155,9 +191,15 @@ export default function HomeScreen() {
           onSelect={onSelectStart}
         />
 
-        <Pressable style={styles.smallBtn} onPress={useCurrentAsStart}>
-          <Text style={styles.smallBtnText}>Use Current Location as Start</Text>
-        </Pressable>
+        <View style={styles.row}>
+          <Pressable style={styles.smallBtn} onPress={useCurrentAsStart}>
+            <Text style={styles.smallBtnText}>Use Current Location as Start</Text>
+          </Pressable>
+
+          <Pressable style={[styles.smallBtn, styles.smallBtnDark]} onPress={swapStartDest}>
+            <Text style={styles.smallBtnText}>Swap ↔</Text>
+          </Pressable>
+        </View>
 
         <SearchBox
           placeholder="Destination"
@@ -173,6 +215,16 @@ export default function HomeScreen() {
         <View style={styles.row}>
           <Pressable style={[styles.smallBtn, styles.smallBtnDark]} onPress={addStopFromDest}>
             <Text style={styles.smallBtnText}>Add as Stop</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.smallBtn, styles.smallBtnGrey]}
+            onPress={() => {
+              setStops([]);
+              clearRoute();
+            }}
+          >
+            <Text style={styles.smallBtnText}>Clear Stops</Text>
           </Pressable>
         </View>
 
@@ -206,22 +258,23 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
+
   header: { paddingHorizontal: 12, paddingTop: 10 },
   title: { fontSize: 20, fontWeight: "900" },
   sub: { marginTop: 4, opacity: 0.6, marginBottom: 10 },
 
   mapWrap: { flex: 1, marginHorizontal: 12, borderRadius: 16, overflow: "hidden" },
 
-  row: { flexDirection: "row", gap: 8, marginBottom: 10 },
+  row: { flexDirection: "row", gap: 8, marginBottom: 10, flexWrap: "wrap" },
 
   smallBtn: {
     backgroundColor: "#111",
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
-    marginBottom: 10,
   },
   smallBtnDark: { backgroundColor: "#333" },
+  smallBtnGrey: { backgroundColor: "#666" },
   smallBtnText: { color: "#fff", fontWeight: "800" },
 
   stopsBox: {
@@ -233,7 +286,12 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   stopsTitle: { fontWeight: "900", marginBottom: 6 },
-  stopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
-  stopText: { fontSize: 12, opacity: 0.8 },
+  stopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  stopText: { fontSize: 12, opacity: 0.8, flex: 1, paddingRight: 10 },
   removeText: { color: "#c00", fontWeight: "800" },
 });

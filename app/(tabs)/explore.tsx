@@ -1,41 +1,86 @@
-import React from "react";
-import { Alert, Pressable, SafeAreaView, Text, View, Linking, Platform } from "react-native";
-import { useLiveLocation } from "../../hooks/useLiveLocation";
+import React, { useCallback, useEffect, useState } from "react";
+import { Alert, Pressable, SafeAreaView, Text, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { openDrivingDirections } from "../../utils/navigation";
+
+type LatLng = { latitude: number; longitude: number };
 
 export default function ExploreScreen() {
-  const { coords, getNow } = useLiveLocation();
+  const [route, setRoute] = useState<{
+    start: LatLng | null;
+    dest: LatLng | null;
+    stops: LatLng[];
+    savedAt: number;
+  } | null>(null);
 
-  const openNav = async () => {
-    const start = coords || (await getNow());
-    if (!start) return Alert.alert("Location", "Please allow location permission.");
+  const load = useCallback(async () => {
+    const raw = await AsyncStorage.getItem("lastRoute");
+    if (!raw) {
+      setRoute(null);
+      return;
+    }
+    try {
+      setRoute(JSON.parse(raw));
+    } catch {
+      setRoute(null);
+    }
+  }, []);
 
-    // Demo destination: you can later wire from shared state or storage
-    const dest = { latitude: 17.385, longitude: 78.4867 }; // Hyderabad center
+  useEffect(() => {
+    load();
+  }, [load]);
 
-    const origin = `${start.latitude},${start.longitude}`;
-    const destination = `${dest.latitude},${dest.longitude}`;
+  const startNavigation = async () => {
+    if (!route?.start || !route?.dest) {
+      Alert.alert("No route found", "Go to Home, pick start & destination, then press Show Route.");
+      return;
+    }
 
-    const googleUrl =
-      `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}` +
-      `&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    const origin = `${route.start.latitude},${route.start.longitude}`;
+    const destination = `${route.dest.latitude},${route.dest.longitude}`;
 
-    const appleUrl =
-      `http://maps.apple.com/?saddr=${encodeURIComponent(origin)}` +
-      `&daddr=${encodeURIComponent(destination)}&dirflg=d`;
-
-    const primary = Platform.OS === "ios" ? appleUrl : googleUrl;
-    await Linking.openURL(primary);
+    try {
+      await openDrivingDirections(origin, destination);
+    } catch (e: any) {
+      Alert.alert("Navigation error", String(e?.message || e));
+    }
   };
 
   return (
     <SafeAreaView style={{ flex: 1, padding: 16 }}>
       <Text style={{ fontSize: 20, fontWeight: "900" }}>Explore</Text>
       <Text style={{ marginTop: 6, opacity: 0.7 }}>
-        This is now your Directions / Navigation screen.
+        Uses the last route you created in Home.
       </Text>
 
       <Pressable
-        onPress={openNav}
+        onPress={load}
+        style={{
+          marginTop: 16,
+          backgroundColor: "#333",
+          padding: 14,
+          borderRadius: 14,
+          alignItems: "center",
+        }}
+      >
+        <Text style={{ color: "#fff", fontWeight: "800" }}>Refresh Route</Text>
+      </Pressable>
+
+      <View style={{ marginTop: 16, padding: 12, borderWidth: 1, borderColor: "#eee", borderRadius: 12 }}>
+        <Text style={{ fontWeight: "800" }}>Last Route</Text>
+        <Text style={{ marginTop: 6, opacity: 0.8 }}>
+          {route?.start ? `Start: ${route.start.latitude.toFixed(5)}, ${route.start.longitude.toFixed(5)}` : "Start: —"}
+        </Text>
+        <Text style={{ marginTop: 6, opacity: 0.8 }}>
+          {route?.dest ? `Dest: ${route.dest.latitude.toFixed(5)}, ${route.dest.longitude.toFixed(5)}` : "Dest: —"}
+        </Text>
+        <Text style={{ marginTop: 6, opacity: 0.8 }}>
+          Stops: {route?.stops?.length || 0}
+        </Text>
+      </View>
+
+      <Pressable
+        onPress={startNavigation}
         style={{
           marginTop: 16,
           backgroundColor: "#111",
@@ -44,7 +89,7 @@ export default function ExploreScreen() {
           alignItems: "center",
         }}
       >
-        <Text style={{ color: "#fff", fontWeight: "800" }}>Start Driving Directions (Demo)</Text>
+        <Text style={{ color: "#fff", fontWeight: "800" }}>Start Driving Directions</Text>
       </Pressable>
     </SafeAreaView>
   );
