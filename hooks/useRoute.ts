@@ -11,16 +11,14 @@ export function useRoute() {
   const fetchRoute = async (points: any[]) => {
     if (points.length < 2) return;
 
-    const formatted = points
-      .map((p) => `${p.longitude},${p.latitude}`)
-      .join(";");
+    const formatted = points.map((p) => `${p.longitude},${p.latitude}`).join(";");
 
     const res = await fetch(
       `${OSRM_URL}/${formatted}?overview=full&geometries=polyline&steps=true`
     );
-
     const data = await res.json();
-    const route = data.routes[0];
+    const route = data.routes?.[0];
+    if (!route) return;
 
     const decoded = polyline.decode(route.geometry, 5).map(([lat, lon]) => ({
       latitude: lat,
@@ -28,22 +26,25 @@ export function useRoute() {
     }));
 
     setCoords(decoded);
-
-    setMeta({
-      distance: route.distance,
-      duration: route.duration,
-    });
+    setMeta({ distance: route.distance, duration: route.duration });
 
     const steps =
       route.legs?.flatMap((leg: any) =>
-        leg.steps.map((s: any) => ({
-          instruction: s.maneuver?.instruction,
-          distance: s.distance,
+        (leg.steps || []).map((s: any) => ({
+          instruction: s.maneuver?.instruction || "Continue",
+          distance: s.distance || 0,
+          duration: s.duration || 0,
         }))
       ) || [];
 
     setDirections(steps);
   };
 
-  return { coords, directions, meta, fetchRoute };
+  const clearRoute = () => {
+    setCoords([]);
+    setDirections([]);
+    setMeta(null);
+  };
+
+  return { coords, directions, meta, fetchRoute, clearRoute };
 }
