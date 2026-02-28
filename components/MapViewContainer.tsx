@@ -1,9 +1,9 @@
+// components/MapViewContainer.tsx
 import React, { useEffect, useRef } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 
 let MapView: any, Marker: any, Polyline: any, UrlTile: any;
 
-// ✅ Only require react-native-maps on native (iOS/Android)
 if (Platform.OS !== "web") {
   const maps = require("react-native-maps");
   MapView = maps.default;
@@ -18,10 +18,14 @@ export default function MapViewContainer({
   start,
   dest,
   routeCoords,
+  user,
+  followUser,
 }: {
   start: LatLng | null;
   dest: LatLng | null;
   routeCoords: LatLng[];
+  user?: LatLng | null;
+  followUser?: boolean;
 }) {
   const mapRef = useRef<any>(null);
 
@@ -35,12 +39,20 @@ export default function MapViewContainer({
     }
   }, [routeCoords]);
 
-  // ✅ Web fallback (prevents crash / blank)
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (!followUser || !user) return;
+    mapRef.current?.animateToRegion(
+      { ...user, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+      300
+    );
+  }, [followUser, user]);
+
   if (Platform.OS === "web") {
     return (
       <View style={styles.webFallback}>
         <Text style={styles.webTitle}>Map is mobile-only</Text>
-        <Text style={styles.webText}>Open this app in Expo Go on iOS/Android.</Text>
+        <Text style={styles.webText}>Open in Expo Go on iOS/Android.</Text>
       </View>
     );
   }
@@ -61,6 +73,7 @@ export default function MapViewContainer({
 
         {start && <Marker coordinate={start} title="Start" />}
         {dest && <Marker coordinate={dest} title="Destination" />}
+        {user && <Marker coordinate={user} title="You" />}
 
         {routeCoords?.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={5} />}
       </MapView>

@@ -20,6 +20,9 @@ import { useLiveLocation } from "../../hooks/useLiveLocation";
 import { geocodeSearch } from "../../hooks/useGeocode";
 import { useRouteContext } from "../../context/RouteContext";
 
+// ✅ Real-time in-app moving navigation
+import { useNavigation } from "../../hooks/useNavigation";
+
 type LatLng = { latitude: number; longitude: number };
 type Stop = { coord: LatLng; label?: string };
 
@@ -34,6 +37,12 @@ export default function HomeScreen() {
   const { country, getNow } = useLiveLocation();
   const { coords, directions, meta, fetchRoute, clearRoute } = useRoute();
   const { setRoute } = useRouteContext();
+
+  // ✅ Live navigation hook (uses current route polyline + duration)
+  const nav = useNavigation({
+    routeCoords: coords,
+    routeDurationSec: meta?.duration ?? null,
+  });
 
   const [start, setStart] = useState<LatLng | null>(null);
   const [dest, setDest] = useState<LatLng | null>(null);
@@ -87,6 +96,7 @@ export default function HomeScreen() {
     setStartQuery(r.display_name || "Start");
     setStartResults([]);
     clearRoute();
+    if (nav.active) nav.stop();
   };
 
   const onSelectDest = (r: any) => {
@@ -97,6 +107,7 @@ export default function HomeScreen() {
     setDestQuery(r.display_name || "Destination");
     setDestResults([]);
     clearRoute();
+    if (nav.active) nav.stop();
   };
 
   // -----------------------------
@@ -104,12 +115,17 @@ export default function HomeScreen() {
   // -----------------------------
 
   const useCurrentAsStart = async () => {
-    const c = await getNow();
-    if (!c) return Alert.alert("Location permission required");
+    try {
+      const c = await getNow();
+      if (!c) return Alert.alert("Location permission required");
 
-    setStart(c);
-    setStartQuery("Current location");
-    clearRoute();
+      setStart(c);
+      setStartQuery("Current location");
+      clearRoute();
+      if (nav.active) nav.stop();
+    } catch (e: any) {
+      Alert.alert("Location error", String(e?.message || e));
+    }
   };
 
   const addStopFromDest = () => {
@@ -120,11 +136,14 @@ export default function HomeScreen() {
     setDestQuery("");
     setDestResults([]);
     clearRoute();
+    if (nav.active) nav.stop();
+    Alert.alert("Stop added", "Now pick the final destination.");
   };
 
   const removeStop = (index: number) => {
     setStops((prev) => prev.filter((_, i) => i !== index));
     clearRoute();
+    if (nav.active) nav.stop();
   };
 
   const swapStartDest = () => {
@@ -140,8 +159,9 @@ export default function HomeScreen() {
     setStartQuery(oldDestQuery);
     setDestQuery(oldStartQuery);
 
-    setStops([]);
+    setStops([]); // MVP: clear stops on swap
     clearRoute();
+    if (nav.active) nav.stop();
   };
 
   const onRoute = async () => {
@@ -151,7 +171,7 @@ export default function HomeScreen() {
     try {
       await fetchRoute([start, ...stops.map((s) => s.coord), dest]);
 
-      // 🔥 Instant Explore sync
+      // 🔥 Instant Explore sync (names + coords)
       setRoute({
         start,
         dest,
@@ -173,6 +193,7 @@ export default function HomeScreen() {
     setStartResults([]);
     setDestResults([]);
     clearRoute();
+    if (nav.active) nav.stop();
 
     setRoute({
       start: null,
@@ -229,6 +250,17 @@ export default function HomeScreen() {
           <Pressable style={styles.btnDark} onPress={addStopFromDest}>
             <Text style={styles.btnText}>Add Stop</Text>
           </Pressable>
+
+          <Pressable
+            style={styles.btnGrey}
+            onPress={() => {
+              setStops([]);
+              clearRoute();
+              if (nav.active) nav.stop();
+            }}
+          >
+            <Text style={styles.btnText}>Clear Stops</Text>
+          </Pressable>
         </View>
 
         {stops.length > 0 && (
@@ -237,7 +269,7 @@ export default function HomeScreen() {
             {stops.map((s, i) => (
               <View key={i} style={styles.stopRow}>
                 <Text style={styles.stopText}>
-                  {i + 1}. {s.label} ({s.coord.latitude.toFixed(4)},{" "}
+                  {i + 1}. {s.label || "Stop"} ({s.coord.latitude.toFixed(4)},{" "}
                   {s.coord.longitude.toFixed(4)})
                 </Text>
                 <Pressable onPress={() => removeStop(i)}>
@@ -249,15 +281,55 @@ export default function HomeScreen() {
         )}
       </View>
 
+      {/* ✅ Live navigation banner */}
+      {nav.active && (
+        <View style={styles.navBanner}>
+          <Text style={styles.navBannerTitle}>
+            {nav.offRoute ? "Off route — go back to route" : "Navigation mode"}
+          </Text>
+          <Text style={styles.navBannerSub}>
+            Remaining: {nav.remainingMeters ? (nav.remainingMeters / 1000).toFixed(1) : "—"} km •
+            ETA: {nav.remainingSec ? Math.max(1, Math.round(nav.remainingSec / 60)) : "—"} min
+          </Text>
+        </View>
+      )}
+
       <View style={styles.mapWrap}>
         <MapViewContainer
           start={start}
           dest={dest}
           routeCoords={coords}
+          user={nav.user}
+          followUser={nav.active}
         />
       </View>
 
       <DirectionsPanel directions={directions} meta={meta} />
+
+      {/* ✅ Start/Stop in-app navigation (real-time moving marker + ETA) */}
+      <View style={styles.navRow}>
+        {!nav.active ? (
+          <Pressable
+            style={[styles.btnNav, { backgroundColor: "#111" }]}
+            onPress={async () => {
+              try {
+                await nav.start();
+              } catch (e: any) {
+                Alert.alert("Navigation", String(e?.message || e));
+              }
+            }}
+          >
+            <Text style={styles.btnNavText}>Start In-App Navigation</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[styles.btnNav, { backgroundColor: "#333" }]}
+            onPress={nav.stop}
+          >
+            <Text style={styles.btnNavText}>Stop Navigation</Text>
+          </Pressable>
+        )}
+      </View>
 
       <ControlButtons onRoute={onRoute} onClear={onClear} />
     </SafeAreaView>
@@ -266,6 +338,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
+
   header: { paddingHorizontal: 12, paddingTop: 10 },
   title: { fontSize: 20, fontWeight: "900" },
   sub: { marginBottom: 10, opacity: 0.6 },
@@ -296,6 +369,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 12,
   },
+  btnGrey: {
+    backgroundColor: "#666",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
   btnText: { color: "#fff", fontWeight: "800" },
 
   stopsBox: {
@@ -315,4 +394,31 @@ const styles = StyleSheet.create({
   },
   stopText: { fontSize: 12, flex: 1, paddingRight: 10 },
   removeText: { color: "#c00", fontWeight: "800" },
+
+  navBanner: {
+    marginHorizontal: 12,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#eee",
+    backgroundColor: "#fff",
+  },
+  navBannerTitle: { fontWeight: "900", fontSize: 14 },
+  navBannerSub: { marginTop: 4, opacity: 0.7 },
+
+  navRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+  },
+  btnNav: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  btnNavText: { color: "#fff", fontWeight: "900" },
 });
