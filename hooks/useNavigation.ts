@@ -45,7 +45,7 @@ export function useNavigation({
   routeDurationSec,
 }: {
   routeCoords: LatLng[];
-  routeDurationSec: number | null; // meta.duration from OSRM
+  routeDurationSec: number | null;
 }) {
   const [active, setActive] = useState(false);
   const [user, setUser] = useState<LatLng | null>(null);
@@ -56,7 +56,6 @@ export function useNavigation({
 
   const subRef = useRef<Location.LocationSubscription | null>(null);
 
-  // Estimate average speed from OSRM duration (better than a constant)
   const avgSpeedMps = useMemo(() => {
     if (routeDurationSec && routeCoords.length > 1) {
       let dist = 0;
@@ -65,12 +64,12 @@ export function useNavigation({
       }
       return dist > 0 ? dist / routeDurationSec : 10;
     }
-    return 10; // fallback ~36 km/h
+    return 10;
   }, [routeCoords, routeDurationSec]);
 
   const start = async () => {
     if (!routeCoords || routeCoords.length < 2) {
-      throw new Error("Create a route first (Show Route).");
+      throw new Error("Create a route first (tap Show Route).");
     }
 
     const { status } = await Location.requestForegroundPermissionsAsync();
@@ -81,12 +80,15 @@ export function useNavigation({
     const cur = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.High,
     });
-    setUser({ latitude: cur.coords.latitude, longitude: cur.coords.longitude });
+
+    const p = { latitude: cur.coords.latitude, longitude: cur.coords.longitude };
+    setUser(p);
 
     subRef.current = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
-        distanceInterval: 10, // ~every 10m
+        distanceInterval: 5, // ✅ more frequent updates
+        timeInterval: 1000,  // ✅ ensure updates even when moving slowly
       },
       (loc) => {
         setUser({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
@@ -109,7 +111,6 @@ export function useNavigation({
 
     const { index, distance } = nearestIndex(user, routeCoords);
 
-    // Simple off-route threshold
     const OFF_ROUTE_METERS = 60;
     setOffRoute(distance > OFF_ROUTE_METERS);
 

@@ -73,7 +73,9 @@ export default function MapViewContainer({
 
         {start && <Marker coordinate={start} title="Start" />}
         {dest && <Marker coordinate={dest} title="Destination" />}
-        {user && <Marker coordinate={user} title="You" />}
+
+        {/* ✅ “You” marker for navigation */}
+        {user && <Marker coordinate={user} title="You" pinColor="blue" />}
 
         {routeCoords?.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={5} />}
       </MapView>
