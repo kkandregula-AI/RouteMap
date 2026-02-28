@@ -1,6 +1,13 @@
 // app/(tabs)/index.tsx
 import React, { useMemo, useState } from "react";
-import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import debounce from "lodash.debounce";
 
 import MapViewContainer from "../../components/MapViewContainer";
@@ -11,11 +18,10 @@ import ControlButtons from "../../components/ControlButtons";
 import { useRoute } from "../../hooks/useRoute";
 import { useLiveLocation } from "../../hooks/useLiveLocation";
 import { geocodeSearch } from "../../hooks/useGeocode";
-
-// ✅ Global shared route state (Explore reads this instantly)
 import { useRouteContext } from "../../context/RouteContext";
 
 type LatLng = { latitude: number; longitude: number };
+type Stop = { coord: LatLng; label?: string };
 
 function toLatLng(r: any): LatLng | null {
   const lat = Number(r?.lat);
@@ -31,13 +37,17 @@ export default function HomeScreen() {
 
   const [start, setStart] = useState<LatLng | null>(null);
   const [dest, setDest] = useState<LatLng | null>(null);
-  const [stops, setStops] = useState<LatLng[]>([]);
+  const [stops, setStops] = useState<Stop[]>([]);
 
   const [startQuery, setStartQuery] = useState("");
   const [destQuery, setDestQuery] = useState("");
 
   const [startResults, setStartResults] = useState<any[]>([]);
   const [destResults, setDestResults] = useState<any[]>([]);
+
+  // -----------------------------
+  // SEARCH HANDLERS
+  // -----------------------------
 
   const debouncedStartSearch = useMemo(
     () =>
@@ -50,7 +60,7 @@ export default function HomeScreen() {
         } catch {
           setStartResults([]);
         }
-      }, 700),
+      }, 600),
     [country]
   );
 
@@ -65,13 +75,14 @@ export default function HomeScreen() {
         } catch {
           setDestResults([]);
         }
-      }, 700),
+      }, 600),
     [country]
   );
 
   const onSelectStart = (r: any) => {
     const ll = toLatLng(r);
-    if (!ll) return Alert.alert("Invalid start", "Could not read coordinates.");
+    if (!ll) return Alert.alert("Invalid start location");
+
     setStart(ll);
     setStartQuery(r.display_name || "Start");
     setStartResults([]);
@@ -80,83 +91,67 @@ export default function HomeScreen() {
 
   const onSelectDest = (r: any) => {
     const ll = toLatLng(r);
-    if (!ll) return Alert.alert("Invalid destination", "Could not read coordinates.");
+    if (!ll) return Alert.alert("Invalid destination");
+
     setDest(ll);
     setDestQuery(r.display_name || "Destination");
     setDestResults([]);
     clearRoute();
   };
 
+  // -----------------------------
+  // ROUTE ACTIONS
+  // -----------------------------
+
   const useCurrentAsStart = async () => {
-    try {
-      const c = await getNow();
-      if (!c) return Alert.alert("Location", "Location permission not granted.");
-      setStart(c);
-      setStartQuery("Current location");
-      setStartResults([]);
-      clearRoute();
-    } catch (e: any) {
-      Alert.alert("Location error", String(e?.message || e));
-    }
+    const c = await getNow();
+    if (!c) return Alert.alert("Location permission required");
+
+    setStart(c);
+    setStartQuery("Current location");
+    clearRoute();
   };
 
   const addStopFromDest = () => {
-    if (!dest) {
-      Alert.alert("Stop", "Select a place in Destination first, then add it as a stop.");
-      return;
-    }
-    setStops((s) => [...s, dest]);
+    if (!dest) return Alert.alert("Select a destination first");
+
+    setStops((prev) => [...prev, { coord: dest, label: destQuery }]);
     setDest(null);
     setDestQuery("");
     setDestResults([]);
     clearRoute();
-    Alert.alert("Stop added", "Now pick the final destination.");
   };
 
-  const removeStop = (idx: number) => {
-    setStops((s) => s.filter((_, i) => i !== idx));
+  const removeStop = (index: number) => {
+    setStops((prev) => prev.filter((_, i) => i !== index));
     clearRoute();
   };
 
   const swapStartDest = () => {
-    if (!start || !dest) {
-      Alert.alert("Swap", "Please select both Start and Destination first.");
-      return;
-    }
+    if (!start || !dest) return;
+
     const oldStart = start;
     const oldDest = dest;
+    const oldStartQuery = startQuery;
+    const oldDestQuery = destQuery;
 
     setStart(oldDest);
     setDest(oldStart);
+    setStartQuery(oldDestQuery);
+    setDestQuery(oldStartQuery);
 
-    const oldStartQ = startQuery;
-    const oldDestQ = destQuery;
-
-    setStartQuery(oldDestQ || "Start");
-    setDestQuery(oldStartQ || "Destination");
-
-    setStartResults([]);
-    setDestResults([]);
-
-    // Keep it simple: clear stops on swap
     setStops([]);
     clearRoute();
   };
 
   const onRoute = async () => {
-    if (!start) {
-      Alert.alert("Missing", "Please choose Start (or use Current Location).");
-      return;
-    }
-    if (!dest) {
-      Alert.alert("Missing", "Please choose Destination.");
-      return;
-    }
+    if (!start) return Alert.alert("Select Start location");
+    if (!dest) return Alert.alert("Select Destination");
 
     try {
-      await fetchRoute([start, ...stops, dest]);
+      await fetchRoute([start, ...stops.map((s) => s.coord), dest]);
 
-      // ✅ Instantly sync to Explore (no refresh needed)
+      // 🔥 Instant Explore sync
       setRoute({
         start,
         dest,
@@ -165,7 +160,7 @@ export default function HomeScreen() {
         destLabel: destQuery,
       });
     } catch (e: any) {
-      Alert.alert("Route error", String(e?.message || e));
+      Alert.alert("Route error", e?.message || "Something went wrong");
     }
   };
 
@@ -179,9 +174,18 @@ export default function HomeScreen() {
     setDestResults([]);
     clearRoute();
 
-    // Also clear shared route for Explore
-    setRoute({ start: null, dest: null, stops: [], startLabel: "", destLabel: "" });
+    setRoute({
+      start: null,
+      dest: null,
+      stops: [],
+      startLabel: "",
+      destLabel: "",
+    });
   };
+
+  // -----------------------------
+  // UI
+  // -----------------------------
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -201,12 +205,12 @@ export default function HomeScreen() {
         />
 
         <View style={styles.row}>
-          <Pressable style={styles.smallBtn} onPress={useCurrentAsStart}>
-            <Text style={styles.smallBtnText}>Use Current Location as Start</Text>
+          <Pressable style={styles.btnPrimary} onPress={useCurrentAsStart}>
+            <Text style={styles.btnText}>Use Current Location</Text>
           </Pressable>
 
-          <Pressable style={[styles.smallBtn, styles.smallBtnDark]} onPress={swapStartDest}>
-            <Text style={styles.smallBtnText}>Swap ↔</Text>
+          <Pressable style={styles.btnDark} onPress={swapStartDest}>
+            <Text style={styles.btnText}>Swap ↔</Text>
           </Pressable>
         </View>
 
@@ -222,30 +226,21 @@ export default function HomeScreen() {
         />
 
         <View style={styles.row}>
-          <Pressable style={[styles.smallBtn, styles.smallBtnDark]} onPress={addStopFromDest}>
-            <Text style={styles.smallBtnText}>Add as Stop</Text>
-          </Pressable>
-
-          <Pressable
-            style={[styles.smallBtn, styles.smallBtnGrey]}
-            onPress={() => {
-              setStops([]);
-              clearRoute();
-            }}
-          >
-            <Text style={styles.smallBtnText}>Clear Stops</Text>
+          <Pressable style={styles.btnDark} onPress={addStopFromDest}>
+            <Text style={styles.btnText}>Add Stop</Text>
           </Pressable>
         </View>
 
         {stops.length > 0 && (
           <View style={styles.stopsBox}>
             <Text style={styles.stopsTitle}>Stops</Text>
-            {stops.map((s, idx) => (
-              <View key={idx} style={styles.stopRow}>
+            {stops.map((s, i) => (
+              <View key={i} style={styles.stopRow}>
                 <Text style={styles.stopText}>
-                  {idx + 1}. {s.latitude.toFixed(4)}, {s.longitude.toFixed(4)}
+                  {i + 1}. {s.label} ({s.coord.latitude.toFixed(4)},{" "}
+                  {s.coord.longitude.toFixed(4)})
                 </Text>
-                <Pressable onPress={() => removeStop(idx)}>
+                <Pressable onPress={() => removeStop(i)}>
                   <Text style={styles.removeText}>Remove</Text>
                 </Pressable>
               </View>
@@ -255,7 +250,11 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.mapWrap}>
-        <MapViewContainer start={start} dest={dest} routeCoords={coords} />
+        <MapViewContainer
+          start={start}
+          dest={dest}
+          routeCoords={coords}
+        />
       </View>
 
       <DirectionsPanel directions={directions} meta={meta} />
@@ -267,24 +266,37 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
-
   header: { paddingHorizontal: 12, paddingTop: 10 },
   title: { fontSize: 20, fontWeight: "900" },
-  sub: { marginTop: 4, opacity: 0.6, marginBottom: 10 },
+  sub: { marginBottom: 10, opacity: 0.6 },
 
-  mapWrap: { flex: 1, marginHorizontal: 12, borderRadius: 16, overflow: "hidden" },
+  mapWrap: {
+    flex: 1,
+    marginHorizontal: 12,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
 
-  row: { flexDirection: "row", gap: 8, marginBottom: 10, flexWrap: "wrap" },
+  row: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 10,
+    flexWrap: "wrap",
+  },
 
-  smallBtn: {
+  btnPrimary: {
     backgroundColor: "#111",
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
   },
-  smallBtnDark: { backgroundColor: "#333" },
-  smallBtnGrey: { backgroundColor: "#666" },
-  smallBtnText: { color: "#fff", fontWeight: "800" },
+  btnDark: {
+    backgroundColor: "#333",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  btnText: { color: "#fff", fontWeight: "800" },
 
   stopsBox: {
     backgroundColor: "#fff",
@@ -301,6 +313,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 6,
   },
-  stopText: { fontSize: 12, opacity: 0.8, flex: 1, paddingRight: 10 },
+  stopText: { fontSize: 12, flex: 1, paddingRight: 10 },
   removeText: { color: "#c00", fontWeight: "800" },
 });
